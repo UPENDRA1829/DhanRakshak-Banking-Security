@@ -1,0 +1,16 @@
+# DhanRakshak Backend Dependencies
+# Install with:  pip install -r requirements.txt
+
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+pydantic==2.7.1
+numpy==1.26.4
+
+# ─── Optional: for PostgreSQL + pgvector (production) ─────────────────
+# Uncomment these when you're ready to move from JSON to a real database:
+# asyncpg==0.29.0
+# pgvector==0.2.5
+# sqlalchemy[asyncio]==2.0.30
+
+# ─── Optional: Redis caching ──────────────────────────────────────────
+# redis==5.0.4

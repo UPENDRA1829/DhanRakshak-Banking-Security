@@ -1,0 +1,241 @@
+# DhanRakshak v3 — Face Recognition Setup Guide
+# ================================================
+# Read this file top to bottom. Every step is numbered.
+
+══════════════════════════════════════════════════════
+STEP 1 — INSTALL PYTHON (if not already installed)
+══════════════════════════════════════════════════════
+
+Check if you have Python:
+    python --version
+    # Should show Python 3.10 or higher
+
+If not installed → download from https://python.org
+
+
+══════════════════════════════════════════════════════
+STEP 2 — SET UP THE BACKEND FOLDER
+══════════════════════════════════════════════════════
+
+Open your terminal (Command Prompt / Terminal) and run:
+
+    cd dhanrakshak/backend
+
+    # Create a virtual environment (recommended)
+    python -m venv venv
+
+    # Activate it:
+    # On Windows:
+    venv\Scripts\activate
+    # On Mac/Linux:
+    source venv/bin/activate
+
+    # Install required packages
+    pip install -r requirements.txt
+
+
+══════════════════════════════════════════════════════
+STEP 3 — START THE BACKEND SERVER
+══════════════════════════════════════════════════════
+
+Inside dhanrakshak/backend/ run:
+
+    uvicorn main:app --reload --port 8000
+
+You should see:
+    INFO: Uvicorn running on http://0.0.0.0:8000
+
+Open http://localhost:8000 in your browser → you'll see:
+    { "status": "online", "enrolled_users": 0, ... }
+
+Open http://localhost:8000/docs → interactive API docs (Swagger UI)
+You can test all endpoints from there.
+
+KEEP THIS TERMINAL OPEN — the server must keep running.
+
+
+══════════════════════════════════════════════════════
+STEP 4 — OPEN THE FRONTEND HTML
+══════════════════════════════════════════════════════
+
+Open dhanrakshak/frontend/DhanRakshak_v3.html in Chrome or Edge.
+(Firefox has stricter camera policies — Chrome works best.)
+
+The page will:
+  • Load the 3D background (Three.js)
+  • Start downloading face-api.js models from CDN (~5 MB)
+  • Show "FACE-API LOADING" beacon → turns green when ready
+
+Wait for the beacon to say "FACE-API READY" before proceeding.
+
+
+══════════════════════════════════════════════════════
+STEP 5 — ENROL YOUR FIRST USER
+══════════════════════════════════════════════════════
+
+1. Click the "ENROL NEW USER" tab at the top
+2. Type a User ID (e.g. "user_001")
+3. Click "START ENROLMENT"
+4. Allow camera access when browser asks
+5. Look at the camera — hold still
+6. The system captures 5 frames, extracts embeddings, sends to backend
+7. Step 5 turns green → "Enrolment successful"
+
+Check your backend terminal — you'll see:
+    [ENROL] User 'user_001' enrolled successfully
+
+A file called face_db.json is created in backend/ — this stores embeddings.
+
+
+══════════════════════════════════════════════════════
+STEP 6 — LOGIN WITH FACE RECOGNITION
+══════════════════════════════════════════════════════
+
+1. Click the "LOGIN" tab
+2. Type the same User ID (e.g. "user_001")
+3. Click "LOGIN & AUTHENTICATE"
+4. Allow camera + microphone access
+5. The system will:
+   a. Fetch your stored embedding from backend
+   b. Activate live webcam
+   c. Show a 4-digit challenge number on screen
+   d. Run face recognition (5 checks over ~7 seconds)
+   e. Start microphone → speak the number you see
+   f. Count your blinks and lip movements
+   g. Show final PASS or FAIL result
+
+For authentication to PASS, ALL THREE must succeed:
+   ✓ Face recognised (similarity > 0.55)
+   ✓ Speech matches the displayed number
+   ✓ Lip sync detected (mouth moved enough times)
+
+
+══════════════════════════════════════════════════════
+STEP 7 — UNDERSTAND THE API ENDPOINTS
+══════════════════════════════════════════════════════
+
+Your backend has these endpoints:
+
+  GET  /                          → health check
+  POST /api/enrol                 → enrol a new user
+  GET  /api/get-embedding/{id}    → get stored embedding for login
+  POST /api/verify-face           → server-side face verification (optional)
+  GET  /api/users                 → list all enrolled users
+  DELETE /api/users/{id}          → delete a user
+
+Full docs at: http://localhost:8000/docs
+
+
+══════════════════════════════════════════════════════
+STEP 8 — TUNE THE FACE MATCH THRESHOLD
+══════════════════════════════════════════════════════
+
+In DhanRakshak_v3.html, find this line (around line 380):
+
+    if(similarity > 0.55) passCount++;   // THRESHOLD: adjust if needed
+
+In backend/main.py, find:
+
+    THRESHOLD = 0.55
+
+Threshold guide:
+  0.50 → very lenient (more false positives — strangers might get in)
+  0.55 → balanced (recommended for testing)
+  0.60 → strict (recommended for production)
+  0.65 → very strict (may reject the same person in bad lighting)
+
+For banking: use 0.60 in the backend for server-side verify.
+
+
+══════════════════════════════════════════════════════
+STEP 9 — MOVE TO PRODUCTION (PostgreSQL)
+══════════════════════════════════════════════════════
+
+The backend currently uses a JSON file (face_db.json) for simplicity.
+For real deployment with many users, switch to PostgreSQL + pgvector:
+
+  1. Install PostgreSQL and pgvector:
+       Ubuntu: sudo apt install postgresql postgresql-contrib
+               sudo apt install postgresql-16-pgvector
+       Mac:    brew install postgresql pgvector
+
+  2. Create database:
+       psql -U postgres
+       CREATE DATABASE dhanrakshak;
+       \c dhanrakshak
+       CREATE EXTENSION vector;
+
+  3. Set environment variable:
+       export DATABASE_URL="postgresql://postgres:yourpassword@localhost:5432/dhanrakshak"
+
+  4. In main.py, follow the instructions in database.py to swap in
+     the async PostgreSQL functions.
+
+  5. Performance comparison:
+       JSON file:         fine up to ~1,000 users
+       PostgreSQL (no index): OK up to ~50,000 users
+       PostgreSQL + HNSW index: handles 10,000,000+ users at <15ms
+
+
+══════════════════════════════════════════════════════
+TROUBLESHOOTING
+══════════════════════════════════════════════════════
+
+Problem: "FACE-API LOADING" beacon stays yellow
+  Fix: Wait longer (first load downloads ~5MB of model files from CDN)
+       Check browser console for errors (F12 → Console)
+
+Problem: "User not found" error at login
+  Fix: Make sure you enrolled first with the exact same User ID
+
+Problem: Face recognition always FAILS
+  Fix: • Ensure good lighting (face not in shadow)
+       • Try threshold 0.50 in the HTML and backend
+       • Re-enrol in the same lighting you'll use for login
+       • Enrol 5 frames with slight head turns
+
+Problem: CORS error in browser console
+  Fix: Make sure the backend is running on port 8000
+       Make sure BACKEND_URL in the HTML is "http://localhost:8000"
+       If using a remote server, update CORS allow_origins in main.py
+
+Problem: Camera not working
+  Fix: Use Chrome or Edge (best WebRTC support)
+       Make sure no other app is using the camera
+       HTTPS is required for camera on non-localhost URLs
+
+Problem: "Speech API not supported"
+  Fix: Use Google Chrome (only browser with Web Speech API support)
+
+
+══════════════════════════════════════════════════════
+FILE STRUCTURE SUMMARY
+══════════════════════════════════════════════════════
+
+dhanrakshak/
+├── frontend/
+│   └── DhanRakshak_v3.html     ← open this in Chrome
+│
+├── backend/
+│   ├── main.py                 ← FastAPI server (run this)
+│   ├── database.py             ← PostgreSQL version (for production)
+│   ├── requirements.txt        ← Python dependencies
+│   └── face_db.json            ← auto-created after first enrolment
+│
+└── SETUP.txt                   ← this file
+
+
+══════════════════════════════════════════════════════
+HOW THE DATA FLOWS (summary)
+══════════════════════════════════════════════════════
+
+ENROLMENT:
+  Browser webcam → face-api.js → 128-D embedding
+  → POST /api/enrol → backend saves to face_db.json (or PostgreSQL)
+
+LOGIN:
+  User types ID → GET /api/get-embedding → browser gets stored embedding
+  → Webcam → face-api.js → live 128-D embedding
+  → cosine_similarity(live, stored) → if > 0.55 → face PASS
+  → Also: speech recognition + lip sync + blink detection
+  → ALL PASS → Authentication Successful

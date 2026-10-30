@@ -1,0 +1,1337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nidhi Rakshak — Face Auth v3</title>
+
+    <!-- Three.js -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+    <!-- MediaPipe Face Mesh -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <!-- face-api.js — for 128-D face embedding extraction -->
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;600&display=swap');
+
+        *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+
+        :root {
+            --bg-deep:#010a14; --bg-card:rgba(4,20,40,0.95);
+            --primary:#00d4ff; --primary-dim:rgba(0,212,255,0.15);
+            --accent:#00ff9f; --danger:#ff3366; --warn:#ffb300;
+            --text-main:#c9eeff; --text-muted:#4a7a99;
+            --border:rgba(0,212,255,0.25);
+            --glow-primary:0 0 12px rgba(0,212,255,0.6),0 0 30px rgba(0,212,255,0.2);
+            --glow-accent:0 0 12px rgba(0,255,159,0.6),0 0 30px rgba(0,255,159,0.2);
+            --glow-danger:0 0 12px rgba(255,51,102,0.6),0 0 30px rgba(255,51,102,0.2);
+        }
+        html { scroll-behavior:smooth; }
+        body {
+            font-family:'Rajdhani',sans-serif;
+            background:var(--bg-deep); color:var(--text-main);
+            min-height:100vh; display:flex; flex-direction:column;
+            align-items:center; padding:24px 16px 48px; overflow-x:hidden;
+        }
+        body::before {
+            content:''; position:fixed; inset:0;
+            background:linear-gradient(rgba(0,212,255,0.03) 1px,transparent 1px),
+                        linear-gradient(90deg,rgba(0,212,255,0.03) 1px,transparent 1px);
+            background-size:40px 40px; pointer-events:none; z-index:5;
+            animation:gridPan 20s linear infinite;
+        }
+        body::after {
+            content:''; position:fixed; inset:0;
+            background:repeating-linear-gradient(0deg,rgba(0,0,0,0.08) 0px,rgba(0,0,0,0.08) 1px,transparent 1px,transparent 3px);
+            pointer-events:none; z-index:6;
+        }
+        @keyframes gridPan { 100% { background-position:40px 40px,40px 40px; } }
+
+        /* ── HEADER ── */
+        .app-header { position:relative; z-index:10; text-align:center; margin-bottom:24px; }
+        .logo-line { display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:6px; }
+        .logo-icon {
+            width:52px; height:52px; border:2px solid var(--primary); border-radius:50%;
+            display:flex; align-items:center; justify-content:center; font-size:24px;
+            box-shadow:var(--glow-primary); animation:pulse-ring 2.5s ease-in-out infinite;
+        }
+        @keyframes pulse-ring {
+            0%,100% { box-shadow:var(--glow-primary); }
+            50% { box-shadow:0 0 25px rgba(0,212,255,0.9),0 0 60px rgba(0,212,255,0.4); }
+        }
+        .app-title {
+            font-family:'Orbitron',sans-serif; font-size:clamp(1.4rem,4vw,2.4rem);
+            font-weight:900; letter-spacing:3px;
+            background:linear-gradient(135deg,var(--primary) 0%,var(--accent) 100%);
+            -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+        }
+        .app-subtitle { font-family:'Share Tech Mono',monospace; font-size:0.75rem; color:var(--text-muted); letter-spacing:4px; text-transform:uppercase; }
+        .beacon-row { display:flex; gap:20px; justify-content:center; margin-top:10px; flex-wrap:wrap; }
+        .beacon { display:flex; align-items:center; gap:6px; font-family:'Share Tech Mono',monospace; font-size:0.65rem; letter-spacing:1px; color:var(--text-muted); }
+        .beacon-dot { width:8px; height:8px; border-radius:50%; background:var(--text-muted); }
+        .beacon-dot.active { background:var(--accent); box-shadow:var(--glow-accent); animation:blink 1.2s ease-in-out infinite; }
+        .beacon-dot.warning { background:var(--warn); box-shadow:0 0 8px rgba(255,179,0,0.7); animation:blink 0.8s ease-in-out infinite; }
+        .beacon-dot.danger { background:var(--danger); box-shadow:var(--glow-danger); }
+        .beacon-dot.idle { background:var(--text-muted); }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+        /* ── TAB SWITCHER (NEW — Login vs Enrol) ── */
+        .tab-bar {
+            position:relative; z-index:10;
+            display:flex; gap:0; margin-bottom:20px;
+            border:1px solid var(--border); border-radius:8px; overflow:hidden;
+        }
+        .tab-btn {
+            flex:1; padding:10px 28px;
+            font-family:'Orbitron',sans-serif; font-size:0.7rem; letter-spacing:2px;
+            background:transparent; color:var(--text-muted);
+            border:none; cursor:pointer; transition:all 0.25s ease;
+        }
+        .tab-btn.active {
+            background:var(--primary-dim); color:var(--primary);
+            box-shadow:inset 0 0 20px rgba(0,212,255,0.1);
+        }
+        .tab-btn:hover:not(.active) { background:rgba(0,212,255,0.05); color:var(--text-main); }
+
+        /* ── MAIN CARD ── */
+        .card {
+            position:relative; z-index:10; width:100%; max-width:960px;
+            background:var(--bg-card); border:1px solid var(--border);
+            border-radius:16px; padding:32px;
+            box-shadow:0 0 0 1px rgba(0,212,255,0.08),0 20px 60px rgba(0,0,0,0.7),inset 0 1px 0 rgba(255,255,255,0.04);
+            backdrop-filter:blur(12px); overflow:hidden;
+        }
+        .card::before,.card::after { content:''; position:absolute; width:24px; height:24px; border-color:var(--primary); border-style:solid; }
+        .card::before { top:12px; left:12px; border-width:2px 0 0 2px; border-radius:4px 0 0 0; }
+        .card::after { bottom:12px; right:12px; border-width:0 2px 2px 0; border-radius:0 0 4px 0; }
+
+        /* mode panels */
+        .mode-panel { display:none; }
+        .mode-panel.active { display:block; }
+
+        /* ── TWO-COLUMN LAYOUT ── */
+        .main-layout { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
+        @media(max-width:640px) { .main-layout { grid-template-columns:1fr; } }
+
+        /* ── VIDEO PANEL ── */
+        .video-panel { display:flex; flex-direction:column; gap:16px; }
+        .video-wrapper {
+            position:relative; width:100%; aspect-ratio:4/3;
+            background:#000; border:1px solid var(--border); border-radius:10px; overflow:hidden;
+        }
+        #videoEl,#enrollVideoEl { width:100%; height:100%; object-fit:cover; display:block; transform:scaleX(-1); }
+        #overlayCanvas,#enrollCanvas {
+            position:absolute; inset:0; width:100%; height:100%;
+            pointer-events:none; transform:scaleX(-1);
+        }
+        .video-placeholder {
+            position:absolute; inset:0; display:flex; flex-direction:column;
+            align-items:center; justify-content:center; gap:10px;
+            color:var(--text-muted); font-family:'Share Tech Mono',monospace; font-size:0.8rem;
+        }
+        .video-placeholder .cam-icon { font-size:3rem; opacity:0.4; }
+        .frame-tl,.frame-br { position:absolute; width:28px; height:28px; border-color:var(--primary); border-style:solid; opacity:0.7; }
+        .frame-tl { top:10px; left:10px; border-width:2px 0 0 2px; border-radius:2px; }
+        .frame-br { bottom:10px; right:10px; border-width:0 2px 2px 0; border-radius:2px; }
+        .scan-line {
+            position:absolute; left:0; right:0; height:2px;
+            background:linear-gradient(90deg,transparent,var(--primary),transparent);
+            opacity:0; box-shadow:0 0 8px var(--primary);
+        }
+        .scan-line.active { opacity:0.8; animation:scanDown 2.5s ease-in-out infinite; }
+        @keyframes scanDown { 0%{top:0%;opacity:0} 10%{opacity:0.8} 90%{opacity:0.8} 100%{top:100%;opacity:0} }
+        .live-badge {
+            position:absolute; top:10px; right:10px;
+            background:rgba(255,51,102,0.2); border:1px solid var(--danger);
+            border-radius:4px; padding:2px 8px;
+            font-family:'Orbitron',sans-serif; font-size:0.6rem; letter-spacing:2px;
+            color:var(--danger); display:none;
+        }
+        .live-badge.show { display:block; animation:blink 1s ease-in-out infinite; }
+
+        /* ── FACE MATCH STATUS BADGE (NEW) ── */
+        .face-match-overlay {
+            position:absolute; bottom:10px; left:10px;
+            background:rgba(0,20,40,0.85); border-radius:6px;
+            padding:4px 10px; font-family:'Share Tech Mono',monospace; font-size:0.65rem;
+            letter-spacing:1px; display:none; transition:all 0.3s;
+        }
+        .face-match-overlay.show { display:block; }
+        .face-match-overlay.checking { color:var(--warn); border:1px solid var(--warn); }
+        .face-match-overlay.matched { color:var(--accent); border:1px solid var(--accent); }
+        .face-match-overlay.failed { color:var(--danger); border:1px solid var(--danger); }
+
+        /* ── CHALLENGE BOX ── */
+        .challenge-box { background:rgba(0,212,255,0.04); border:1px solid var(--border); border-radius:10px; padding:16px; text-align:center; }
+        .challenge-label { font-family:'Share Tech Mono',monospace; font-size:0.65rem; letter-spacing:3px; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase; }
+        .challenge-number { font-family:'Orbitron',sans-serif; font-size:3rem; font-weight:900; letter-spacing:12px; color:var(--warn); text-shadow:0 0 20px rgba(255,179,0,0.6); display:none; }
+        .challenge-number.show { display:block; animation:flicker 0.12s ease-in 0.3s; }
+        @keyframes flicker { 0%,100%{opacity:1} 50%{opacity:0.5} }
+        .challenge-hint { font-size:0.75rem; color:var(--text-muted); margin-top:6px; }
+
+        /* ── STATUS PANEL ── */
+        .status-panel { display:flex; flex-direction:column; gap:14px; }
+        .section-label { font-family:'Share Tech Mono',monospace; font-size:0.6rem; letter-spacing:4px; color:var(--text-muted); text-transform:uppercase; margin-bottom:2px; }
+        .metric-row { background:rgba(0,212,255,0.035); border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+        .metric-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+        .metric-title { font-family:'Orbitron',sans-serif; font-size:0.65rem; letter-spacing:1px; color:var(--text-muted); text-transform:uppercase; }
+        .metric-badge { font-family:'Share Tech Mono',monospace; font-size:0.7rem; padding:2px 10px; border-radius:3px; border:1px solid transparent; background:rgba(74,122,153,0.2); color:var(--text-muted); transition:all 0.3s ease; }
+        .metric-badge.pass { background:rgba(0,255,159,0.15); border-color:var(--accent); color:var(--accent); box-shadow:var(--glow-accent); }
+        .metric-badge.fail { background:rgba(255,51,102,0.15); border-color:var(--danger); color:var(--danger); box-shadow:var(--glow-danger); }
+        .metric-badge.warn { background:rgba(255,179,0,0.15); border-color:var(--warn); color:var(--warn); }
+        .metric-badge.info { background:rgba(0,212,255,0.15); border-color:var(--primary); color:var(--primary); }
+        .metric-value { font-family:'Share Tech Mono',monospace; font-size:0.95rem; color:var(--text-main); min-height:1.2em; word-break:break-word; }
+        .risk-bar-container { margin-top:6px; height:6px; background:rgba(255,255,255,0.06); border-radius:3px; overflow:hidden; }
+        #riskBar { height:100%; width:0%; border-radius:3px; background:var(--accent); transition:width 0.5s ease,background 0.5s ease; }
+
+        /* ── RESULT BANNER ── */
+        .result-banner { display:none; margin-top:24px; padding:22px; border-radius:12px; text-align:center; animation:fadeSlideIn 0.5s ease; }
+        .result-banner.success { display:block; background:rgba(0,255,159,0.08); border:2px solid var(--accent); box-shadow:var(--glow-accent),inset 0 0 40px rgba(0,255,159,0.04); }
+        .result-banner.failure { display:block; background:rgba(255,51,102,0.08); border:2px solid var(--danger); box-shadow:var(--glow-danger),inset 0 0 40px rgba(255,51,102,0.04); }
+        @keyframes fadeSlideIn { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+        .result-icon { font-size:3rem; margin-bottom:8px; }
+        .result-title { font-family:'Orbitron',sans-serif; font-size:clamp(1rem,3vw,1.6rem); font-weight:900; letter-spacing:3px; margin-bottom:6px; }
+        .result-banner.success .result-title { color:var(--accent); text-shadow:var(--glow-accent); }
+        .result-banner.failure .result-title { color:var(--danger); text-shadow:var(--glow-danger); }
+        .result-subtitle { font-family:'Share Tech Mono',monospace; font-size:0.75rem; color:var(--text-muted); letter-spacing:2px; }
+
+        /* ── BUTTONS ── */
+        .btn-row { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-top:24px; }
+        .btn {
+            position:relative; font-family:'Orbitron',sans-serif; font-size:0.75rem;
+            font-weight:600; letter-spacing:2px; text-transform:uppercase;
+            padding:14px 36px; border:none; border-radius:6px; cursor:pointer;
+            overflow:hidden; transition:transform 0.15s ease,box-shadow 0.3s ease;
+        }
+        .btn:active { transform:scale(0.96); }
+        .btn-primary { background:linear-gradient(135deg,#0099cc 0%,#00d4ff 100%); color:#000a14; box-shadow:0 0 18px rgba(0,212,255,0.4),0 4px 14px rgba(0,0,0,0.4); }
+        .btn-primary:hover { box-shadow:0 0 28px rgba(0,212,255,0.7),0 6px 20px rgba(0,0,0,0.4); }
+        .btn-accent { background:linear-gradient(135deg,#007744 0%,#00ff9f 100%); color:#001a0a; box-shadow:0 0 18px rgba(0,255,159,0.4),0 4px 14px rgba(0,0,0,0.4); }
+        .btn-accent:hover { box-shadow:0 0 28px rgba(0,255,159,0.7),0 6px 20px rgba(0,0,0,0.4); }
+        .btn-reset { background:rgba(255,51,102,0.12); border:1px solid var(--danger); color:var(--danger); box-shadow:0 0 10px rgba(255,51,102,0.2); }
+        .btn-reset:hover { background:rgba(255,51,102,0.2); box-shadow:var(--glow-danger); }
+        .btn:disabled { opacity:0.4; cursor:not-allowed; transform:none !important; }
+        .btn .ripple { position:absolute; width:0; height:0; border-radius:50%; background:rgba(255,255,255,0.2); transform:translate(-50%,-50%); animation:rippleAnim 0.5s ease-out; pointer-events:none; }
+        @keyframes rippleAnim { to { width:200px; height:200px; opacity:0; } }
+
+        /* ── LOADER ── */
+        .loader { display:none; width:20px; height:20px; border:2px solid rgba(0,212,255,0.15); border-top-color:var(--primary); border-radius:50%; animation:spin 0.8s linear infinite; margin:auto; }
+        .loader.show { display:block; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        .processing-row { display:none; align-items:center; justify-content:center; gap:10px; margin-top:14px; font-family:'Share Tech Mono',monospace; font-size:0.7rem; color:var(--primary); letter-spacing:2px; }
+        .processing-row.show { display:flex; }
+
+        /* ── ENROLMENT PANEL (NEW) ── */
+        .enrol-layout { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
+        @media(max-width:640px) { .enrol-layout { grid-template-columns:1fr; } }
+        .enrol-steps { display:flex; flex-direction:column; gap:12px; }
+        .enrol-step {
+            display:flex; align-items:flex-start; gap:12px;
+            padding:12px 14px; border-radius:8px;
+            border:1px solid var(--border); background:rgba(0,212,255,0.03);
+            transition:all 0.3s;
+        }
+        .enrol-step.active { border-color:var(--primary); background:var(--primary-dim); }
+        .enrol-step.done { border-color:var(--accent); background:rgba(0,255,159,0.06); }
+        .enrol-step.error { border-color:var(--danger); background:rgba(255,51,102,0.06); }
+        .step-num { font-family:'Orbitron',sans-serif; font-size:0.75rem; font-weight:900; width:24px; flex-shrink:0; padding-top:2px; color:var(--text-muted); }
+        .enrol-step.active .step-num { color:var(--primary); }
+        .enrol-step.done .step-num { color:var(--accent); }
+        .enrol-step.error .step-num { color:var(--danger); }
+        .step-content { flex:1; }
+        .step-title { font-family:'Orbitron',sans-serif; font-size:0.65rem; letter-spacing:1px; margin-bottom:3px; }
+        .step-desc { font-family:'Share Tech Mono',monospace; font-size:0.7rem; color:var(--text-muted); line-height:1.5; }
+        .user-id-input {
+            width:100%; margin-top:8px;
+            background:rgba(0,212,255,0.05); border:1px solid var(--border);
+            border-radius:6px; padding:8px 12px;
+            font-family:'Share Tech Mono',monospace; font-size:0.85rem;
+            color:var(--text-main); outline:none; letter-spacing:2px;
+        }
+        .user-id-input:focus { border-color:var(--primary); box-shadow:0 0 8px rgba(0,212,255,0.3); }
+        .capture-progress {
+            margin-top:8px; height:4px; background:rgba(255,255,255,0.06);
+            border-radius:2px; overflow:hidden;
+        }
+        .capture-fill { height:100%; width:0%; background:var(--accent); transition:width 0.4s ease; border-radius:2px; }
+        .capture-count { font-family:'Share Tech Mono',monospace; font-size:0.7rem; color:var(--text-muted); margin-top:4px; }
+
+        /* ── FOOTER ── */
+        .app-footer { position:relative; z-index:10; margin-top:28px; font-family:'Share Tech Mono',monospace; font-size:0.6rem; color:var(--text-muted); letter-spacing:2px; text-align:center; opacity:0.6; }
+
+        /* ── INFO BOX ── */
+        .info-box {
+            background:rgba(0,212,255,0.05); border:1px solid rgba(0,212,255,0.2);
+            border-radius:8px; padding:12px 16px; margin-bottom:16px;
+            font-family:'Share Tech Mono',monospace; font-size:0.7rem; color:var(--text-muted);
+            line-height:1.7; letter-spacing:0.5px;
+        }
+        .info-box span { color:var(--primary); }
+    </style>
+</head>
+<body>
+
+<canvas id="bgCanvas" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:2;pointer-events:none;"></canvas>
+
+<!-- HEADER -->
+<header class="app-header">
+    <div class="logo-line">
+        <div class="logo-icon">🛡️</div>
+        <h1 class="app-title">Nidhi Rakshak</h1>
+    </div>
+    <p class="app-subtitle">Authentication System v3 — Face Recognition + Deepfake Defence</p>
+    <div class="beacon-row">
+        <div class="beacon"><div class="beacon-dot active" id="sysBeacon"></div><span id="sysBeaconLabel">SYSTEM ONLINE</span></div>
+        <div class="beacon"><div class="beacon-dot idle" id="camBeacon"></div><span id="camBeaconLabel">CAMERA IDLE</span></div>
+        <div class="beacon"><div class="beacon-dot idle" id="micBeacon"></div><span id="micBeaconLabel">MIC IDLE</span></div>
+        <div class="beacon"><div class="beacon-dot idle" id="faceBeacon"></div><span id="faceBeaconLabel">FACE-API LOADING</span></div>
+    </div>
+</header>
+
+<!-- TAB BAR -->
+<div class="tab-bar">
+    <button class="tab-btn active" id="tabLogin" onclick="switchTab('login')">🔐 LOGIN</button>
+    <button class="tab-btn" id="tabEnrol" onclick="switchTab('enrol')">👤 ENROL NEW USER</button>
+</div>
+
+<!-- MAIN CARD -->
+<main class="card">
+
+    <!-- ══════════════ LOGIN PANEL ══════════════ -->
+    <div class="mode-panel active" id="loginPanel">
+
+        <!-- User ID input row -->
+        <div class="info-box" style="margin-bottom:16px">
+            Enter your <span>User ID</span> before clicking Login. The system will fetch your stored face from the backend, then compare it with your live webcam feed.
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:20px">
+            <label style="font-family:'Share Tech Mono',monospace;font-size:0.7rem;letter-spacing:2px;color:var(--text-muted);white-space:nowrap">USER ID :</label>
+            <input class="user-id-input" id="loginUserId" placeholder="e.g. user_001" style="flex:1" />
+        </div>
+
+        <div class="main-layout">
+            <!-- LEFT: VIDEO -->
+            <div class="video-panel">
+                <div class="video-wrapper" id="videoWrapper">
+                    <video id="videoEl" autoplay muted playsinline></video>
+                    <canvas id="overlayCanvas"></canvas>
+                    <div class="video-placeholder" id="videoPlaceholder">
+                        <div class="cam-icon">📷</div>
+                        <div>CAMERA OFFLINE</div>
+                        <div style="font-size:0.6rem;letter-spacing:3px">PRESS LOGIN TO ACTIVATE</div>
+                    </div>
+                    <div class="frame-tl"></div>
+                    <div class="frame-br"></div>
+                    <div class="scan-line" id="scanLine"></div>
+                    <div class="live-badge" id="liveBadge">● LIVE</div>
+                    <!-- NEW: face match status badge -->
+                    <div class="face-match-overlay" id="faceMatchOverlay">SCANNING FACE...</div>
+                </div>
+
+                <!-- Challenge Number -->
+                <div class="challenge-box">
+                    <div class="challenge-label">🔢 Speak this number aloud</div>
+                    <div class="challenge-number" id="challengeNumber">----</div>
+                    <div class="challenge-hint" id="challengeHint">Challenge will appear after login</div>
+                </div>
+
+                <div class="processing-row" id="processingRow">
+                    <div class="loader show"></div>
+                    <span id="processingText">INITIALISING...</span>
+                </div>
+            </div>
+
+            <!-- RIGHT: STATUS -->
+            <div class="status-panel">
+                <div class="section-label">⬡ Biometric Analysis</div>
+
+                <!-- NEW: Face Recognition row -->
+                <div class="metric-row">
+                    <div class="metric-header">
+                        <span class="metric-title">🧬 Face Recognition</span>
+                        <span class="metric-badge" id="faceBadge">WAITING</span>
+                    </div>
+                    <div class="metric-value" id="faceDisplay">—</div>
+                </div>
+
+                <!-- Speech -->
+                <div class="metric-row">
+                    <div class="metric-header">
+                        <span class="metric-title">🎙 Speech Match</span>
+                        <span class="metric-badge" id="speechBadge">WAITING</span>
+                    </div>
+                    <div class="metric-value" id="speechDisplay">—</div>
+                </div>
+
+                <!-- Lip Sync -->
+                <div class="metric-row">
+                    <div class="metric-header">
+                        <span class="metric-title">👄 Lip Sync</span>
+                        <span class="metric-badge" id="lipSyncBadge">WAITING</span>
+                    </div>
+                    <div class="metric-value" id="lipSyncDisplay">—</div>
+                </div>
+
+                <!-- Blink -->
+                <div class="metric-row">
+                    <div class="metric-header">
+                        <span class="metric-title">👁 Blink Detection</span>
+                        <span class="metric-badge info" id="blinkBadge">0</span>
+                    </div>
+                    <div class="metric-value" id="blinkDisplay">Awaiting face detection...</div>
+                </div>
+
+                <!-- Risk Score -->
+                <div class="metric-row">
+                    <div class="metric-header">
+                        <span class="metric-title">⚠ Deepfake Risk Score</span>
+                        <span class="metric-badge" id="riskBadge">0 / 100</span>
+                    </div>
+                    <div class="metric-value" id="riskDisplay">Running baseline checks...</div>
+                    <div class="risk-bar-container"><div id="riskBar"></div></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result Banner -->
+        <div class="result-banner" id="resultBanner">
+            <div class="result-icon" id="resultIcon">—</div>
+            <div class="result-title" id="resultTitle">—</div>
+            <div class="result-subtitle" id="resultSubtitle">—</div>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" id="loginBtn" onclick="startLogin(event)">🔐 LOGIN &amp; AUTHENTICATE</button>
+            <button class="btn btn-reset" id="resetBtn" onclick="resetSystem(event)" disabled>↺ RESET SYSTEM</button>
+        </div>
+
+    </div><!-- /loginPanel -->
+
+    <!-- ══════════════ ENROLMENT PANEL (NEW) ══════════════ -->
+    <div class="mode-panel" id="enrolPanel">
+
+        <div class="info-box">
+            <span>One-time setup.</span> Enrol captures 5 face snapshots, extracts 128-D embeddings, averages them, and <span>sends to your backend</span> for storage. After enrolment the user can log in with face recognition.
+        </div>
+
+        <div class="enrol-layout">
+            <!-- LEFT: Camera -->
+            <div class="video-panel">
+                <div class="video-wrapper">
+                    <video id="enrollVideoEl" autoplay muted playsinline></video>
+                    <canvas id="enrollCanvas"></canvas>
+                    <div class="video-placeholder" id="enrollPlaceholder">
+                        <div class="cam-icon">👤</div>
+                        <div>ENROLMENT CAMERA</div>
+                        <div style="font-size:0.6rem;letter-spacing:3px">CLICK START ENROLMENT</div>
+                    </div>
+                    <div class="frame-tl"></div>
+                    <div class="frame-br"></div>
+                    <div class="scan-line" id="enrollScanLine"></div>
+                    <div class="live-badge" id="enrollLiveBadge">● LIVE</div>
+                </div>
+
+                <div class="processing-row" id="enrollProcessingRow">
+                    <div class="loader show"></div>
+                    <span id="enrollProcessingText">READY</span>
+                </div>
+            </div>
+
+            <!-- RIGHT: Steps -->
+            <div class="enrol-steps">
+                <div style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;letter-spacing:3px;color:var(--text-muted);margin-bottom:4px">ENROLMENT STEPS</div>
+
+                <div class="enrol-step active" id="eStep1">
+                    <div class="step-num">01</div>
+                    <div class="step-content">
+                        <div class="step-title">Enter User ID</div>
+                        <div class="step-desc">Unique identifier for this user</div>
+                        <input class="user-id-input" id="enrollUserId" placeholder="e.g. user_001" />
+                    </div>
+                </div>
+
+                <div class="enrol-step" id="eStep2">
+                    <div class="step-num">02</div>
+                    <div class="step-content">
+                        <div class="step-title">Face Capture</div>
+                        <div class="step-desc">5 frames captured automatically. Look straight, then slightly left & right.</div>
+                        <div class="capture-progress"><div class="capture-fill" id="captureFill"></div></div>
+                        <div class="capture-count" id="captureCount">0 / 5 frames</div>
+                    </div>
+                </div>
+
+                <div class="enrol-step" id="eStep3">
+                    <div class="step-num">03</div>
+                    <div class="step-content">
+                        <div class="step-title">Embedding Extraction</div>
+                        <div class="step-desc">face-api.js computes 128-D vector per frame, then averages them.</div>
+                    </div>
+                </div>
+
+                <div class="enrol-step" id="eStep4">
+                    <div class="step-num">04</div>
+                    <div class="step-content">
+                        <div class="step-title">Backend Storage</div>
+                        <div class="step-desc">POST /api/enrol — sends { userId, embedding } to your Python server.</div>
+                    </div>
+                </div>
+
+                <div class="enrol-step" id="eStep5">
+                    <div class="step-num">05</div>
+                    <div class="step-content">
+                        <div class="step-title">Done</div>
+                        <div class="step-desc" id="enrollResultText">User will be ready to log in.</div>
+                    </div>
+                </div>
+
+                <div class="btn-row" style="margin-top:8px;justify-content:flex-start">
+                    <button class="btn btn-accent" id="enrollBtn" onclick="startEnrolment(event)">👤 START ENROLMENT</button>
+                    <button class="btn btn-reset" id="enrollResetBtn" onclick="resetEnrolment(event)" disabled>↺ RESET</button>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /enrolPanel -->
+
+</main>
+
+<footer class="app-footer">
+    NIDHI RAKSHAK v3.0 &nbsp;|&nbsp; FACE RECOGNITION + DEEPFAKE DEFENCE &nbsp;|&nbsp; BANKING-GRADE SECURITY
+</footer>
+
+<!-- ══════════════════════════════════════════
+     JAVASCRIPT
+══════════════════════════════════════════ -->
+<script>
+/* ═══════════════════════════════════════════════
+   CONFIGURATION — change this to your backend URL
+═══════════════════════════════════════════════ */
+const BACKEND_URL = 'http://localhost:8000'; // ← your FastAPI server address
+
+/* ═══════════════════════════════════════════════
+   FACE-API.JS MODEL LOADING
+   Models are hosted on jsDelivr CDN — no download needed
+═══════════════════════════════════════════════ */
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+let faceApiReady = false;
+
+async function loadFaceApiModels() {
+    setBeacon('faceBeacon','warning','FACE-API LOADING');
+    try {
+        await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+        ]);
+        faceApiReady = true;
+        setBeacon('faceBeacon','active','FACE-API READY');
+        console.log('face-api.js models loaded');
+    } catch(e) {
+        setBeacon('faceBeacon','danger','FACE-API ERROR');
+        console.error('face-api model load error:', e);
+    }
+}
+loadFaceApiModels(); // start loading immediately on page load
+
+/* ═══════════════════════════════════════════════
+   TAB SWITCHER
+═══════════════════════════════════════════════ */
+function switchTab(tab) {
+    document.getElementById('loginPanel').classList.toggle('active', tab==='login');
+    document.getElementById('enrolPanel').classList.toggle('active', tab==='enrol');
+    document.getElementById('tabLogin').classList.toggle('active', tab==='login');
+    document.getElementById('tabEnrol').classList.toggle('active', tab==='enrol');
+}
+
+/* ═══════════════════════════════════════════════
+   LOGIN STATE
+═══════════════════════════════════════════════ */
+let sessionActive = false;
+let mediaStream = null;
+let audioStream = null;
+let camera = null;
+let faceMesh = null;
+let recognition = null;
+let challengeCode = null;
+let speechMatchResult = 'WAITING';
+let lipSyncResult = 'WAITING';
+let faceMatchResult = 'WAITING'; // NEW
+let riskScore = 0;
+let blinkCount = 0;
+let blinkCooldown = false;
+const EAR_THRESHOLD = 0.22;
+const BLINK_CONSEC = 2;
+let blinkFrameCounter = 0;
+let mouthOpenCount = 0;
+let mouthIsOpen = false;
+const MAR_THRESHOLD = 0.04;
+let lipSyncCheckDone = false;
+let spokenText = '';
+
+// Face recognition state (NEW)
+let storedEmbedding = null;    // Float32Array fetched from backend
+let faceCheckInterval = null;  // setInterval handle for live checking
+
+/* ═══════════════════════════════════════════════
+   UTILITIES
+═══════════════════════════════════════════════ */
+function dist(p1,p2){ return Math.sqrt((p1.x-p2.x)**2+(p1.y-p2.y)**2); }
+function computeEAR(t1,t2,b1,b2,l,r){ return (dist(t1,b1)+dist(t2,b2))/(2*dist(l,r)); }
+function computeMAR(t,b,l,r){ return dist(t,b)/(dist(l,r)+1e-6); }
+function generateChallenge(){ const a=new Uint16Array(1); window.crypto.getRandomValues(a); return String(1000+(a[0]%9000)); }
+function delay(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function addRipple(btn,e){ const rpl=document.createElement('div'); rpl.className='ripple'; const rc=btn.getBoundingClientRect(); rpl.style.left=(e.clientX-rc.left)+'px'; rpl.style.top=(e.clientY-rc.top)+'px'; btn.appendChild(rpl); setTimeout(()=>rpl.remove(),600); }
+function cosineSimilarity(a,b){
+    let dot=0,na=0,nb=0;
+    for(let i=0;i<a.length;i++){ dot+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; }
+    return dot/(Math.sqrt(na)*Math.sqrt(nb)+1e-8);
+}
+
+/* ── UI Helpers ── */
+function setProcessing(show,text='PROCESSING...'){
+    const row=document.getElementById('processingRow');
+    document.getElementById('processingText').textContent=text;
+    show?row.classList.add('show'):row.classList.remove('show');
+}
+function setBadge(id,label,state){
+    const el=document.getElementById(id);
+    el.textContent=label;
+    el.className='metric-badge '+(state||'');
+}
+function setBeacon(id,cls,label){
+    document.getElementById(id).className='beacon-dot '+cls;
+    const l=document.getElementById(id+'Label');
+    if(l) l.textContent=label;
+}
+function updateRiskUI(score){
+    riskScore=Math.min(100,score);
+    const bar=document.getElementById('riskBar');
+    bar.style.width=riskScore+'%';
+    let color,state;
+    if(riskScore<30){color='var(--accent)';state='pass';}
+    else if(riskScore<60){color='var(--warn)';state='warn';}
+    else{color='var(--danger)';state='fail';}
+    bar.style.background=color;
+    setBadge('riskBadge',riskScore+' / 100',state);
+    document.getElementById('riskDisplay').textContent=
+        riskScore===0?'No anomalies':riskScore<30?'Low risk':riskScore<60?'Moderate risk':'High risk — possible deepfake';
+}
+
+/* ═══════════════════════════════════════════════
+   NEW — STEP 1: FETCH STORED EMBEDDING FROM BACKEND
+   Called at login start, before camera activates
+═══════════════════════════════════════════════ */
+async function fetchStoredEmbedding(userId) {
+    setBadge('faceBadge','FETCHING','warn');
+    document.getElementById('faceDisplay').textContent='Fetching stored face from server...';
+    setFaceMatchOverlay('checking','FETCHING STORED FACE...');
+
+    const res = await fetch(`${BACKEND_URL}/api/get-embedding/${encodeURIComponent(userId)}`);
+    if(!res.ok) {
+        const err = await res.json().catch(()=>({detail:'Unknown error'}));
+        throw new Error(err.detail || 'User not found. Please enrol first.');
+    }
+    const data = await res.json();
+    // data.embedding is Array(128)
+    storedEmbedding = new Float32Array(data.embedding);
+    setBadge('faceBadge','LOADED','info');
+    document.getElementById('faceDisplay').textContent=`Stored embedding loaded (${storedEmbedding.length}-D)`;
+}
+
+/* ═══════════════════════════════════════════════
+   NEW — STEP 5: LIVE FACE COMPARISON LOOP
+   Runs every 1.5 seconds while session is active
+═══════════════════════════════════════════════ */
+async function startFaceRecognitionLoop() {
+    if(!faceApiReady) {
+        setBadge('faceBadge','MODEL NOT READY','fail');
+        faceMatchResult='FAIL';
+        return;
+    }
+    if(!storedEmbedding) {
+        setBadge('faceBadge','NO STORED FACE','fail');
+        faceMatchResult='FAIL';
+        return;
+    }
+
+    setFaceMatchOverlay('checking','SCANNING...');
+    setBadge('faceBadge','SCANNING','warn');
+
+    let passCount = 0;
+    let checkCount = 0;
+    const REQUIRED_PASSES = 2; // must match at least 2 out of 5 checks
+    const MAX_CHECKS = 5;
+
+    return new Promise((resolve) => {
+        faceCheckInterval = setInterval(async () => {
+            if(!sessionActive || checkCount >= MAX_CHECKS) {
+                clearInterval(faceCheckInterval);
+                // Decide
+                if(passCount >= REQUIRED_PASSES) {
+                    faceMatchResult = 'PASS';
+                    setBadge('faceBadge','✓ MATCHED','pass');
+                    document.getElementById('faceDisplay').textContent=
+                        `Face matched! (${passCount}/${MAX_CHECKS} checks passed)`;
+                    setFaceMatchOverlay('matched','✓ FACE MATCHED');
+                } else {
+                    faceMatchResult = 'FAIL';
+                    setBadge('faceBadge','✗ NO MATCH','fail');
+                    document.getElementById('faceDisplay').textContent=
+                        `Face not recognised (${passCount}/${MAX_CHECKS} checks passed)`;
+                    setFaceMatchOverlay('failed','✗ FACE MISMATCH');
+                }
+                resolve();
+                return;
+            }
+
+            checkCount++;
+            const video = document.getElementById('videoEl');
+            try {
+                // Detect face + compute 128-D descriptor from live video frame
+                const detection = await faceapi
+                    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+                    .withFaceLandmarks()
+                    .withFaceDescriptor();
+
+                if(detection) {
+                    const liveEmb = detection.descriptor; // Float32Array(128)
+                    const similarity = cosineSimilarity(liveEmb, storedEmbedding);
+                    const pct = Math.round(similarity * 100);
+                    document.getElementById('faceDisplay').textContent=
+                        `Check ${checkCount}/${MAX_CHECKS} — similarity: ${pct}%`;
+
+                    if(similarity > 0.55) passCount++; // THRESHOLD: adjust if needed
+                } else {
+                    document.getElementById('faceDisplay').textContent=
+                        `Check ${checkCount}/${MAX_CHECKS} — no face detected, align face`;
+                }
+            } catch(e) {
+                console.warn('face-api detect error:', e);
+            }
+        }, 1500);
+    });
+}
+
+function setFaceMatchOverlay(cls, text) {
+    const el = document.getElementById('faceMatchOverlay');
+    el.className = 'face-match-overlay show ' + cls;
+    el.textContent = text;
+}
+
+/* ═══════════════════════════════════════════════
+   CAMERA ACTIVATION
+═══════════════════════════════════════════════ */
+async function activateCamera() {
+    setProcessing(true,'REQUESTING CAMERA & MIC...');
+    const combinedStream = await navigator.mediaDevices.getUserMedia({
+        video:{width:{ideal:640},height:{ideal:480},facingMode:'user'},
+        audio:true
+    });
+    mediaStream = new MediaStream(combinedStream.getVideoTracks());
+    audioStream = new MediaStream(combinedStream.getAudioTracks());
+    const video = document.getElementById('videoEl');
+    video.setAttribute('playsinline',''); video.setAttribute('muted',''); video.setAttribute('autoplay','');
+    video.srcObject = mediaStream;
+    try { await video.play(); } catch(e){ video.muted=true; await video.play(); }
+    await new Promise(resolve=>{
+        if(video.videoWidth>0) return resolve();
+        video.addEventListener('loadedmetadata',resolve,{once:true});
+        setTimeout(resolve,2000);
+    });
+    document.getElementById('videoPlaceholder').style.display='none';
+    document.getElementById('liveBadge').classList.add('show');
+    document.getElementById('scanLine').classList.add('active');
+    const canvas=document.getElementById('overlayCanvas');
+    canvas.width=video.videoWidth||640; canvas.height=video.videoHeight||480;
+    setBeacon('camBeacon','active','CAMERA LIVE');
+    setBeacon('micBeacon','warning','MIC READY');
+    setProcessing(true,'INITIATING FACE MESH...');
+}
+
+/* ═══════════════════════════════════════════════
+   MEDIAPIPE FACE MESH
+═══════════════════════════════════════════════ */
+async function activateFaceMesh() {
+    const video=document.getElementById('videoEl');
+    const canvas=document.getElementById('overlayCanvas');
+    const ctx=canvas.getContext('2d');
+    faceMesh=new FaceMesh({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
+    faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+    faceMesh.onResults(results=>processLandmarks(results,canvas,ctx));
+    const camOpts={
+        onFrame:async()=>{ if(sessionActive){ canvas.width=video.videoWidth||640; canvas.height=video.videoHeight||480; await faceMesh.send({image:video}); }},
+        width:video.videoWidth||640, height:video.videoHeight||480
+    };
+    camera=new Camera(video,camOpts);
+    await camera.start();
+    setProcessing(true,'FACE MESH ACTIVE');
+}
+
+function processLandmarks(results,canvas,ctx) {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    if(!results.multiFaceLandmarks||!results.multiFaceLandmarks.length){
+        document.getElementById('blinkDisplay').textContent='No face detected — align face';
+        return;
+    }
+    const lm=results.multiFaceLandmarks[0];
+    drawConnectors(ctx,lm,FACEMESH_TESSELATION,{color:'rgba(0,212,255,0.07)',lineWidth:0.5});
+    drawConnectors(ctx,lm,FACEMESH_RIGHT_EYE,{color:'rgba(0,212,255,0.5)',lineWidth:1});
+    drawConnectors(ctx,lm,FACEMESH_LEFT_EYE,{color:'rgba(0,212,255,0.5)',lineWidth:1});
+    drawConnectors(ctx,lm,FACEMESH_LIPS,{color:'rgba(0,255,159,0.5)',lineWidth:1.5});
+
+    const leftEAR=computeEAR(lm[159],lm[158],lm[145],lm[153],lm[133],lm[362]);
+    const rightEAR=computeEAR(lm[386],lm[385],lm[374],lm[382],lm[362],lm[263]);
+    const avgEAR=(leftEAR+rightEAR)/2;
+    if(avgEAR<EAR_THRESHOLD){ blinkFrameCounter++; }
+    else {
+        if(blinkFrameCounter>=BLINK_CONSEC&&!blinkCooldown){
+            blinkCount++;
+            blinkCooldown=true;
+            setBadge('blinkBadge',String(blinkCount),'info');
+            document.getElementById('blinkDisplay').textContent=`${blinkCount} blink${blinkCount!==1?'s':''} detected (EAR: ${avgEAR.toFixed(3)})`;
+            setTimeout(()=>{blinkCooldown=false;},400);
+        }
+        blinkFrameCounter=0;
+    }
+    const mar=computeMAR(lm[13],lm[14],lm[61],lm[291]);
+    if(mar>MAR_THRESHOLD&&!mouthIsOpen){ mouthIsOpen=true; }
+    else if(mar<=MAR_THRESHOLD&&mouthIsOpen){ mouthIsOpen=false; mouthOpenCount++; }
+    if(!lipSyncCheckDone){
+        document.getElementById('lipSyncDisplay').textContent=`Mouth cycles: ${mouthOpenCount} | MAR: ${mar.toFixed(3)}`;
+    }
+}
+
+/* ═══════════════════════════════════════════════
+   SPEECH RECOGNITION
+═══════════════════════════════════════════════ */
+function activateSpeech() {
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){ document.getElementById('speechDisplay').textContent='Speech API not supported'; setBadge('speechBadge','UNSUPPORTED','fail'); speechMatchResult='FAIL'; evaluateLipSync(); return; }
+    recognition=new SR();
+    recognition.lang='en-IN'; recognition.continuous=false; recognition.interimResults=true; recognition.maxAlternatives=3;
+    setBeacon('micBeacon','active','MIC LIVE');
+    setProcessing(true,'LISTENING — SPEAK THE NUMBER NOW');
+    recognition.onstart=()=>{ document.getElementById('speechDisplay').textContent='...listening...'; };
+    recognition.onresult=(event)=>{
+        let interim='',finalText='';
+        for(let i=event.resultIndex;i<event.results.length;i++){
+            const t=event.results[i][0].transcript;
+            if(event.results[i].isFinal) finalText+=t; else interim+=t;
+        }
+        spokenText=finalText||interim;
+        document.getElementById('speechDisplay').textContent=`"${spokenText}"`;
+    };
+    recognition.onerror=(e)=>{ document.getElementById('speechDisplay').textContent=`Error: ${e.error}`; setBadge('speechBadge','ERROR','fail'); speechMatchResult='FAIL'; evaluateLipSync(); };
+    recognition.onend=()=>{ setBeacon('micBeacon','idle','MIC IDLE'); evaluateSpeech(); };
+    recognition.start();
+    setTimeout(()=>{ if(recognition&&sessionActive){ try{recognition.stop();}catch(_){} } },10000);
+}
+
+function wordToDigits(text) {
+    const map={zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9};
+    return text.toLowerCase().replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine)\b/g,m=>map[m]);
+}
+function evaluateSpeech() {
+    if(!sessionActive) return;
+    const cleaned=wordToDigits(spokenText);
+    const extracted=cleaned.replace(/\D/g,'');
+    document.getElementById('speechDisplay').textContent=`"${spokenText}" → parsed: ${extracted||'(none)'}`;
+    if(extracted===challengeCode){ speechMatchResult='PASS'; setBadge('speechBadge','✓ PASS','pass'); }
+    else { speechMatchResult='FAIL'; setBadge('speechBadge','✗ FAIL','fail'); }
+    evaluateLipSync();
+}
+function evaluateLipSync() {
+    if(!sessionActive) return;
+    lipSyncCheckDone=true;
+    const digits=challengeCode.length;
+    const minCycles=Math.max(1,digits-2);
+    const maxCycles=digits+4;
+    const ok=mouthOpenCount>=minCycles&&mouthOpenCount<=maxCycles;
+    if(ok){ lipSyncResult='PASS'; setBadge('lipSyncBadge','✓ PASS','pass'); document.getElementById('lipSyncDisplay').textContent=`${mouthOpenCount} cycles (expected ${minCycles}–${maxCycles}) ✓`; }
+    else { lipSyncResult='FAIL'; setBadge('lipSyncBadge','✗ FAIL','fail'); document.getElementById('lipSyncDisplay').textContent=`${mouthOpenCount} cycles (expected ${minCycles}–${maxCycles}) ✗`; }
+    finalizeResults();
+}
+
+/* ═══════════════════════════════════════════════
+   RISK SCORE — now includes faceMatchResult
+═══════════════════════════════════════════════ */
+function computeRiskScore() {
+    let score=0;
+    if(faceMatchResult!=='PASS') score+=40;  // face mismatch = biggest red flag
+    if(blinkCount<2) score+=20;
+    if(lipSyncResult==='FAIL') score+=20;
+    if(speechMatchResult==='FAIL') score+=20;
+    return Math.min(score,100);
+}
+
+/* ═══════════════════════════════════════════════
+   FINAL DECISION — now requires faceMatchResult=PASS
+═══════════════════════════════════════════════ */
+function finalizeResults() {
+    if(!sessionActive) return;
+    setProcessing(false);
+    const finalScore=computeRiskScore();
+    updateRiskUI(finalScore);
+    const banner=document.getElementById('resultBanner');
+    const icon=document.getElementById('resultIcon');
+    const title=document.getElementById('resultTitle');
+    const subtitle=document.getElementById('resultSubtitle');
+
+    // ALL THREE must pass: face recognition + speech + lipsync
+    const authenticated=
+        faceMatchResult==='PASS' &&
+        speechMatchResult==='PASS' &&
+        lipSyncResult==='PASS' &&
+        finalScore<50;
+
+    if(authenticated){
+        banner.className='result-banner success';
+        icon.textContent='✅';
+        title.textContent='Authentication Successful';
+        subtitle.textContent=`IDENTITY VERIFIED — Face ✓ Speech ✓ Liveness ✓ — Risk: ${finalScore}/100`;
+    } else {
+        banner.className='result-banner failure';
+        icon.textContent='🚨';
+        title.textContent='Authentication Failed';
+        let reasons=[];
+        if(faceMatchResult!=='PASS') reasons.push('Face mismatch');
+        if(speechMatchResult!=='PASS') reasons.push('Speech mismatch');
+        if(lipSyncResult!=='PASS') reasons.push('Lip sync failure');
+        if(finalScore>=50) reasons.push(`Risk ${finalScore}/100`);
+        subtitle.textContent=reasons.join(' | ')||'Unknown anomaly';
+    }
+    stopFaceMesh();
+    document.getElementById('resetBtn').disabled=false;
+    document.getElementById('loginBtn').disabled=true;
+}
+
+/* ═══════════════════════════════════════════════
+   MAIN LOGIN FLOW — modified to add face recognition
+═══════════════════════════════════════════════ */
+async function startLogin(event) {
+    if(sessionActive) return;
+
+    const userId = document.getElementById('loginUserId').value.trim();
+    if(!userId) { alert('Please enter your User ID first.'); return; }
+
+    sessionActive=true;
+    addRipple(event.currentTarget,event);
+    document.getElementById('loginBtn').disabled=true;
+    document.getElementById('resetBtn').disabled=false;
+
+    try {
+        // Step 1: Fetch stored embedding from backend (NEW)
+        await fetchStoredEmbedding(userId);
+
+        // Step 2: Activate camera
+        await activateCamera();
+
+        // Step 3: Show challenge
+        challengeCode=generateChallenge();
+        const el=document.getElementById('challengeNumber');
+        el.textContent=challengeCode; el.classList.add('show');
+        document.getElementById('challengeHint').textContent='Say this number clearly into your microphone';
+
+        // Step 4: Start face mesh for blink/lip detection
+        await activateFaceMesh();
+
+        // Step 5: Start face recognition loop (NEW — runs in parallel)
+        setProcessing(true,'FACE RECOGNITION SCANNING...');
+        const facePromise = startFaceRecognitionLoop(); // runs 5 checks over ~7.5s
+
+        // Step 6: Wait 2s then start speech
+        await delay(2000);
+        activateSpeech(); // this is async but doesn't return a promise we need to await
+
+        // Step 7: Wait for face recognition to finish
+        await facePromise;
+        setProcessing(false);
+
+    } catch(err) {
+        console.error('Login error:',err);
+        setProcessing(false);
+        alert('Error: '+err.message);
+        resetSystem({currentTarget:document.getElementById('resetBtn'),clientX:0,clientY:0});
+    }
+}
+
+/* ═══════════════════════════════════════════════
+   RESET
+═══════════════════════════════════════════════ */
+function resetSystem(event) {
+    addRipple(event.currentTarget,event);
+    if(mediaStream){ mediaStream.getTracks().forEach(t=>t.stop()); mediaStream=null; }
+    if(audioStream){ audioStream.getTracks().forEach(t=>t.stop()); audioStream=null; }
+    stopFaceMesh();
+    if(recognition){ try{recognition.stop();}catch(_){} recognition=null; }
+    if(faceCheckInterval){ clearInterval(faceCheckInterval); faceCheckInterval=null; }
+    sessionActive=false; challengeCode=null;
+    speechMatchResult='WAITING'; lipSyncResult='WAITING'; faceMatchResult='WAITING';
+    riskScore=0; blinkCount=0; blinkFrameCounter=0; blinkCooldown=false;
+    mouthOpenCount=0; mouthIsOpen=false; lipSyncCheckDone=false; spokenText='';
+    storedEmbedding=null;
+    const video=document.getElementById('videoEl');
+    video.srcObject=null;
+    document.getElementById('videoPlaceholder').style.display='flex';
+    document.getElementById('liveBadge').classList.remove('show');
+    document.getElementById('scanLine').classList.remove('active');
+    document.getElementById('challengeNumber').classList.remove('show');
+    document.getElementById('challengeNumber').textContent='----';
+    document.getElementById('challengeHint').textContent='Challenge will appear after login';
+    document.getElementById('faceMatchOverlay').className='face-match-overlay';
+    document.getElementById('faceDisplay').textContent='—';
+    document.getElementById('speechDisplay').textContent='—';
+    document.getElementById('lipSyncDisplay').textContent='—';
+    document.getElementById('blinkDisplay').textContent='Awaiting face detection...';
+    document.getElementById('riskDisplay').textContent='Running baseline checks...';
+    setBadge('faceBadge','WAITING','');
+    setBadge('speechBadge','WAITING','');
+    setBadge('lipSyncBadge','WAITING','');
+    setBadge('blinkBadge','0','info');
+    setBadge('riskBadge','0 / 100','');
+    const bar=document.getElementById('riskBar'); bar.style.width='0%'; bar.style.background='var(--accent)';
+    document.getElementById('resultBanner').className='result-banner';
+    setBeacon('camBeacon','idle','CAMERA IDLE');
+    setBeacon('micBeacon','idle','MIC IDLE');
+    setProcessing(false);
+    document.getElementById('loginBtn').disabled=false;
+    document.getElementById('resetBtn').disabled=true;
+}
+function stopFaceMesh() {
+    if(camera){ try{camera.stop();}catch(_){} camera=null; }
+    if(faceMesh){ try{faceMesh.close();}catch(_){} faceMesh=null; }
+    const canvas=document.getElementById('overlayCanvas');
+    const ctx=canvas.getContext('2d');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+}
+function startLiveRiskUpdater() {
+    setInterval(()=>{
+        if(!sessionActive) return;
+        let s=0;
+        if(faceMatchResult!=='PASS') s+=40;
+        if(blinkCount<2) s+=20;
+        if(lipSyncResult==='FAIL') s+=20;
+        if(speechMatchResult==='FAIL') s+=20;
+        updateRiskUI(Math.min(s,100));
+    },500);
+}
+startLiveRiskUpdater();
+
+/* ═══════════════════════════════════════════════
+   ENROLMENT FLOW (NEW)
+═══════════════════════════════════════════════ */
+let enrollStream=null;
+let enrollActive=false;
+let capturedEmbeddings=[];
+const CAPTURE_TOTAL=5;
+
+async function startEnrolment(event) {
+    if(enrollActive) return;
+    const userId=document.getElementById('enrollUserId').value.trim();
+    if(!userId){ alert('Please enter a User ID.'); return; }
+    if(!faceApiReady){ alert('face-api.js models are still loading. Please wait a moment.'); return; }
+
+    enrollActive=true;
+    addRipple(event.currentTarget,event);
+    document.getElementById('enrollBtn').disabled=true;
+    document.getElementById('enrollResetBtn').disabled=false;
+    capturedEmbeddings=[];
+
+    try {
+        // Step 1 → active
+        setEnrolStep(1,'active');
+
+        // Start camera
+        setEnrolProcessing(true,'STARTING CAMERA...');
+        enrollStream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'user'},audio:false});
+        const video=document.getElementById('enrollVideoEl');
+        video.srcObject=enrollStream;
+        video.setAttribute('playsinline',''); video.setAttribute('muted',''); video.setAttribute('autoplay','');
+        try{await video.play();}catch(e){video.muted=true;await video.play();}
+        await new Promise(r=>{ if(video.videoWidth>0) return r(); video.addEventListener('loadedmetadata',r,{once:true}); setTimeout(r,2000); });
+        document.getElementById('enrollPlaceholder').style.display='none';
+        document.getElementById('enrollLiveBadge').classList.add('show');
+        document.getElementById('enrollScanLine').classList.add('active');
+        setEnrolStep(1,'done'); setEnrolStep(2,'active');
+
+        // Step 2: Capture 5 frames
+        setEnrolProcessing(true,'CAPTURING FACE FRAMES — look at camera');
+        for(let i=0;i<CAPTURE_TOTAL;i++){
+            await delay(1200); // gap between captures
+            const detection=await faceapi
+                .detectSingleFace(video,new faceapi.TinyFaceDetectorOptions())
+                .withFaceLandmarks()
+                .withFaceDescriptor();
+            if(!detection){
+                i--; // retry this frame
+                setEnrolProcessing(true,`Frame ${i+1}/${CAPTURE_TOTAL} — no face, align face and wait...`);
+                await delay(800);
+                continue;
+            }
+            capturedEmbeddings.push(Array.from(detection.descriptor));
+            const pct=Math.round(((i+1)/CAPTURE_TOTAL)*100);
+            document.getElementById('captureFill').style.width=pct+'%';
+            document.getElementById('captureCount').textContent=`${i+1} / ${CAPTURE_TOTAL} frames`;
+            setEnrolProcessing(true,`Captured frame ${i+1}/${CAPTURE_TOTAL}`);
+        }
+        setEnrolStep(2,'done'); setEnrolStep(3,'active');
+
+        // Step 3: Average embeddings
+        setEnrolProcessing(true,'COMPUTING AVERAGE EMBEDDING...');
+        await delay(500);
+        const avgEmb=averageEmbeddings(capturedEmbeddings);
+        setEnrolStep(3,'done'); setEnrolStep(4,'active');
+
+        // Step 4: Send to backend
+        setEnrolProcessing(true,'SENDING TO BACKEND...');
+        const res=await fetch(`${BACKEND_URL}/api/enrol`,{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({userId,embedding:avgEmb})
+        });
+        if(!res.ok){
+            const err=await res.json().catch(()=>({detail:'Server error'}));
+            throw new Error(err.detail||'Enrolment failed');
+        }
+        const data=await res.json();
+        setEnrolStep(4,'done'); setEnrolStep(5,'done');
+        document.getElementById('enrollResultText').textContent=`✓ ${data.message||'Enrolment successful!'} You can now log in.`;
+        setEnrolProcessing(false);
+
+    } catch(err) {
+        console.error('Enrolment error:',err);
+        setEnrolProcessing(false);
+        // Mark current step as error
+        for(let i=1;i<=5;i++){
+            const el=document.getElementById('eStep'+i);
+            if(el.classList.contains('active')){ el.classList.remove('active'); el.classList.add('error'); break; }
+        }
+        document.getElementById('enrollResultText').textContent='Error: '+err.message;
+        setEnrolStep(5,'error');
+        document.getElementById('enrollBtn').disabled=false;
+    }
+}
+
+function averageEmbeddings(embs) {
+    const len=embs[0].length;
+    const avg=new Array(len).fill(0);
+    for(const e of embs){ for(let i=0;i<len;i++) avg[i]+=e[i]; }
+    for(let i=0;i<len;i++) avg[i]/=embs.length;
+    return avg;
+}
+
+function setEnrolStep(n,state) {
+    const el=document.getElementById('eStep'+n);
+    el.className='enrol-step '+state;
+}
+function setEnrolProcessing(show,text='') {
+    const row=document.getElementById('enrollProcessingRow');
+    document.getElementById('enrollProcessingText').textContent=text;
+    show?row.classList.add('show'):row.classList.remove('show');
+}
+function resetEnrolment(event) {
+    addRipple(event.currentTarget,event);
+    if(enrollStream){ enrollStream.getTracks().forEach(t=>t.stop()); enrollStream=null; }
+    enrollActive=false; capturedEmbeddings=[];
+    document.getElementById('enrollVideoEl').srcObject=null;
+    document.getElementById('enrollPlaceholder').style.display='flex';
+    document.getElementById('enrollLiveBadge').classList.remove('show');
+    document.getElementById('enrollScanLine').classList.remove('active');
+    document.getElementById('captureFill').style.width='0%';
+    document.getElementById('captureCount').textContent='0 / 5 frames';
+    document.getElementById('enrollResultText').textContent='User will be ready to log in.';
+    for(let i=1;i<=5;i++){
+        const el=document.getElementById('eStep'+i);
+        el.className='enrol-step'+(i===1?' active':'');
+    }
+    setEnrolProcessing(false);
+    document.getElementById('enrollBtn').disabled=false;
+    document.getElementById('enrollResetBtn').disabled=true;
+}
+</script>
+
+<!-- THREE.JS 3D BACKGROUND — unchanged from original -->
+<script>
+(()=>{
+    const canvas=document.getElementById('bgCanvas');
+    const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:false});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.5));
+    renderer.setSize(window.innerWidth,window.innerHeight);
+    const scene=new THREE.Scene();
+    const camera=new THREE.PerspectiveCamera(60,window.innerWidth/window.innerHeight,0.1,200);
+    camera.position.set(0,7,22);
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x112244,2));
+    const keyLight=new THREE.PointLight(0x00d4ff,3,40);
+    keyLight.position.set(0,8,0); scene.add(keyLight);
+    const rimLight=new THREE.PointLight(0x00ff9f,1.5,30);
+    rimLight.position.set(-10,5,-8); scene.add(rimLight);
+
+    // Floor grid
+    const gridHelper=new THREE.GridHelper(60,30,0x001a2e,0x001a2e);
+    scene.add(gridHelper);
+
+    // Vault
+    function makeVault(){
+        const g=new THREE.Group();
+        const body=new THREE.Mesh(new THREE.CylinderGeometry(2.5,2.5,3,32),new THREE.MeshStandardMaterial({color:0x0a1628,metalness:0.9,roughness:0.2}));
+        body.position.y=1.5; g.add(body);
+        const door=new THREE.Mesh(new THREE.CylinderGeometry(2.4,2.4,0.4,32),new THREE.MeshStandardMaterial({color:0x0d2040,metalness:0.95,roughness:0.1}));
+        door.position.y=2; g.add(door);
+        const wheel=new THREE.Mesh(new THREE.TorusGeometry(1.2,0.12,8,24),new THREE.MeshStandardMaterial({color:0x00d4ff,metalness:0.8,roughness:0.2,emissive:0x003344,emissiveIntensity:0.5}));
+        wheel.rotation.x=Math.PI/2; wheel.position.y=2.22; wheel.name='wheel'; g.add(wheel);
+        const spoke1=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.1,0.1),new THREE.MeshStandardMaterial({color:0x00d4ff,metalness:0.8}));
+        spoke1.position.y=2.22; g.add(spoke1);
+        const spoke2=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,2.4),new THREE.MeshStandardMaterial({color:0x00d4ff,metalness:0.8}));
+        spoke2.position.y=2.22; g.add(spoke2);
+        const beacon=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,8),new THREE.MeshStandardMaterial({color:0xff3366,emissive:0xff3366,emissiveIntensity:1}));
+        beacon.position.set(0,3.3,0); beacon.name='beacon'; g.add(beacon);
+        return g;
+    }
+    const vault=makeVault(); scene.add(vault);
+
+    // Shield
+    const SHIELD_R=5;
+    const shieldOuterMat=new THREE.MeshStandardMaterial({color:0x00d4ff,transparent:true,opacity:0.18,wireframe:true,side:THREE.DoubleSide});
+    const shieldInnerMat=new THREE.MeshStandardMaterial({color:0x00d4ff,transparent:true,opacity:0.04,side:THREE.DoubleSide});
+    const shieldOuter=new THREE.Mesh(new THREE.IcosahedronGeometry(SHIELD_R,2),shieldOuterMat);
+    const shieldInner=new THREE.Mesh(new THREE.IcosahedronGeometry(SHIELD_R*0.85,1),shieldInnerMat);
+    scene.add(shieldOuter); scene.add(shieldInner);
+
+    // Rings
+    const rings=[];
+    for(let i=0;i<3;i++){
+        const r=new THREE.Mesh(new THREE.TorusGeometry(SHIELD_R+(i*0.3),0.04,4,80),new THREE.MeshStandardMaterial({color:0x00d4ff,emissive:0x002233,emissiveIntensity:0.3,transparent:true,opacity:0.5-i*0.1}));
+        scene.add(r); rings.push(r);
+    }
+
+    // Gangsters
+    function makeGangster(color){
+        const g=new THREE.Group();
+        const body=new THREE.Mesh(new THREE.BoxGeometry(0.7,1.1,0.4),new THREE.MeshStandardMaterial({color,metalness:0.3,roughness:0.8}));
+        body.position.y=0.9; g.add(body);
+        const head=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.45),new THREE.MeshStandardMaterial({color:0x1a1a1a}));
+        head.position.y=1.75; g.add(head);
+        const larm=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.8,0.22),new THREE.MeshStandardMaterial({color,metalness:0.2}));
+        larm.position.set(-0.46,0.85,0); g.add(larm);
+        const rarm=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.8,0.22),new THREE.MeshStandardMaterial({color,metalness:0.2}));
+        rarm.position.set(0.46,0.85,0); g.add(rarm);
+        const lleg=new THREE.Mesh(new THREE.BoxGeometry(0.28,0.75,0.28),new THREE.MeshStandardMaterial({color:0x0a0a14}));
+        lleg.position.set(-0.2,0.13,0); g.add(lleg);
+        const rleg=new THREE.Mesh(new THREE.BoxGeometry(0.28,0.75,0.28),new THREE.MeshStandardMaterial({color:0x0a0a14}));
+        rleg.position.set(0.2,0.13,0); g.add(rleg);
+        return g;
+    }
+    const GANGSTER_CONFIGS=[
+        {angle:0.25,startDist:16,speed:0.016,color:0x1a1a2e},
+        {angle:Math.PI-0.25,startDist:16,speed:0.013,color:0x0d0d1a},
+        {angle:Math.PI*0.55,startDist:17,speed:0.011,color:0x1e1e10},
+        {angle:Math.PI*1.4,startDist:17,speed:0.014,color:0x101a0d},
+    ];
+    const gangsters=GANGSTER_CONFIGS.map(cfg=>{
+        const mesh=makeGangster(cfg.color);
+        mesh.position.set(Math.cos(cfg.angle)*cfg.startDist,0,Math.sin(cfg.angle)*cfg.startDist);
+        mesh.lookAt(0,0,0); scene.add(mesh);
+        return{mesh,angle:cfg.angle,startDist:cfg.startDist,currentDist:cfg.startDist,speed:cfg.speed,bouncing:false,bounceVel:0};
+    });
+
+    // Particles
+    const MAX_P=600;
+    const pPositions=new Float32Array(MAX_P*3).fill(9999);
+    const pVelocities=Array.from({length:MAX_P},()=>new THREE.Vector3());
+    const pLife=new Float32Array(MAX_P);
+    const pGeo=new THREE.BufferGeometry();
+    pGeo.setAttribute('position',new THREE.BufferAttribute(pPositions,3));
+    const pMat=new THREE.PointsMaterial({color:0x00d4ff,size:0.18,transparent:true,opacity:0.9});
+    const pMesh=new THREE.Points(pGeo,pMat);
+    scene.add(pMesh);
+    let pCursor=0;
+    function spawnBurst(pos,color){
+        pMat.color.setHex(color);
+        for(let i=0;i<40;i++){
+            const idx=pCursor%MAX_P;
+            pPositions[idx*3]=pos.x; pPositions[idx*3+1]=pos.y+1.2; pPositions[idx*3+2]=pos.z;
+            pVelocities[idx].set((Math.random()-0.5)*0.5,Math.random()*0.35,(Math.random()-0.5)*0.5);
+            pLife[idx]=1.0; pCursor++;
+        }
+        pGeo.attributes.position.needsUpdate=true;
+    }
+    const ambPos=new Float32Array(300*3);
+    for(let i=0;i<300;i++){ambPos[i*3]=(Math.random()-0.5)*50;ambPos[i*3+1]=Math.random()*10;ambPos[i*3+2]=(Math.random()-0.5)*50;}
+    const ambGeo=new THREE.BufferGeometry();
+    ambGeo.setAttribute('position',new THREE.BufferAttribute(ambPos,3));
+    scene.add(new THREE.Points(ambGeo,new THREE.PointsMaterial({color:0x004466,size:0.07,transparent:true,opacity:0.55})));
+
+    let shieldFlash=0;
+    window.addEventListener('resize',()=>{
+        camera.aspect=window.innerWidth/window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth,window.innerHeight);
+    });
+
+    let t=0;
+    function animate(){
+        requestAnimationFrame(animate);
+        t+=0.016;
+        camera.position.x=Math.sin(t*0.06)*7;
+        camera.position.z=20+Math.cos(t*0.06)*5;
+        camera.position.y=7+Math.sin(t*0.04)*1.5;
+        camera.lookAt(0,2,0);
+        vault.children.forEach(c=>{if(c.name==='wheel')c.rotation.z=t*0.6;});
+        vault.children.forEach(c=>{if(c.name==='beacon')c.material.color.setHex(Math.sin(t*6)>0?0xff3366:0x330011);});
+        keyLight.intensity=2.5+Math.sin(t*2.8)*0.7;
+        shieldOuter.rotation.y=t*0.28; shieldOuter.rotation.x=t*0.11;
+        shieldInner.rotation.y=-t*0.18;
+        if(shieldFlash>0){
+            shieldFlash=Math.max(0,shieldFlash-0.04);
+            shieldOuterMat.color.setHex(shieldFlash>0.5?0xffffff:0x00d4ff);
+            shieldOuterMat.opacity=0.22+shieldFlash*0.5;
+            shieldInnerMat.opacity=0.04+shieldFlash*0.28;
+        } else {
+            shieldOuterMat.color.setHex(0x00d4ff);
+            shieldOuterMat.opacity=0.18+0.07*Math.sin(t*1.8);
+            shieldInnerMat.opacity=0.03+0.02*Math.sin(t*2.1);
+        }
+        rings.forEach((r,i)=>{ r.rotation.y=t*(0.18+i*0.04)*(i%2===0?1:-1); });
+        gangsters.forEach((gd,gi)=>{
+            if(gd.bouncing){
+                gd.currentDist+=gd.bounceVel; gd.bounceVel*=0.90;
+                if(Math.abs(gd.bounceVel)<0.004){gd.bouncing=false;gd.bounceVel=0;}
+                gd.currentDist=Math.min(gd.startDist,Math.max(SHIELD_R+0.6,gd.currentDist));
+            } else {
+                gd.currentDist-=gd.speed;
+                if(gd.currentDist<=SHIELD_R+0.5){gd.bouncing=true;gd.bounceVel=0.42;shieldFlash=1.0;spawnBurst(gd.mesh.position,gi%2===0?0xffaa00:0xff3366);}
+            }
+            const px=Math.cos(gd.angle)*gd.currentDist;
+            const pz=Math.sin(gd.angle)*gd.currentDist;
+            gd.mesh.position.set(px,Math.abs(Math.sin(t*4.5+gd.angle))*0.12,pz);
+            gd.mesh.lookAt(0,gd.mesh.position.y,0);
+            if(!gd.bouncing){
+                const phase=Math.sin(t*6.5+gi*1.1);
+                const lLeg=gd.mesh.children[6]; const rLeg=gd.mesh.children[7];
+                if(lLeg)lLeg.rotation.x=phase*0.35;
+                if(rLeg)rLeg.rotation.x=-phase*0.35;
+            }
+        });
+        const pAttr=pGeo.attributes.position;
+        let anyAlive=false;
+        for(let i=0;i<MAX_P;i++){
+            if(pLife[i]>0){
+                pAttr.array[i*3]+=pVelocities[i].x; pAttr.array[i*3+1]+=pVelocities[i].y; pAttr.array[i*3+2]+=pVelocities[i].z;
+                pVelocities[i].y-=0.006; pLife[i]-=0.022;
+                if(pLife[i]<=0){pAttr.array[i*3]=pAttr.array[i*3+1]=pAttr.array[i*3+2]=9999;}
+                anyAlive=true;
+            }
+        }
+        if(anyAlive) pAttr.needsUpdate=true;
+        renderer.render(scene,camera);
+    }
+    animate();
+})();
+</script>
+</body>
+</html>
